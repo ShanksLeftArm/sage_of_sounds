@@ -8,7 +8,7 @@ module.exports = (Discord, client, message) => {
     const bot_command = client.application.commands.get(cmd) || client.application.commands.find(a => a.aliases && a.aliases.includes(cmd));
 
     if (bot_command){
-         bot_command.execute(client, message, args, Discord);
+         bot_command.execute(client, message, cmd, args, Discord);
     } else {
         console.log(`Command \'${cmd}\' is not known to me`);
         return message.reply(`Your instruction of \'${cmd}\' is not something I know how to do`);
