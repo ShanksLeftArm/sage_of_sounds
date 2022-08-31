@@ -1,6 +1,6 @@
 from requests import get
 import discord
-from discord import Message
+from discord import VoiceChannel
 from discord.ext import commands
 from music_bot.player import AudioPlayer
 import json
@@ -18,7 +18,7 @@ class MusicBot(commands.Bot):
         await self.add_cog(BotCommands(self))
 
     
-    async def get_audio_player(self, voice_channel):
+    async def get_audio_player(self, voice_channel: VoiceChannel):
         guild = voice_channel.guild
         if guild.id in self.AudioPlayers:
             return self.AudioPlayers[guild.id]
@@ -29,7 +29,7 @@ class MusicBot(commands.Bot):
             #     channel=voice_channel, self_mute=False, self_deaf=True
             # )
         
-        newPlayer = self.init_player(AudioPlayer(self, guild.voice_client))
+        newPlayer = self.init_player(AudioPlayer(self.loop, guild.voice_client))
         self.AudioPlayers[guild.id] = newPlayer
         return newPlayer
 
@@ -42,13 +42,12 @@ class MusicBot(commands.Bot):
 
     async def on_player_complete(self, player, **__):
         # TODO empty VC logic
-        # TODO empty playlist logic
         
-        player.play()
+        await player.playNext()
         return
 
 class BotCommands(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: MusicBot):
         self.bot = bot
 
     @commands.command(name='add')
@@ -65,6 +64,7 @@ class BotCommands(commands.Cog):
     
     @commands.command(name='play')
     async def play(self, ctx: commands.Context, *, args):
+        print('Play command started')
         voiceState = ctx.author.voice
         if (voiceState is None):
             await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
@@ -72,11 +72,8 @@ class BotCommands(commands.Cog):
 
         player = await self.bot.get_audio_player(voiceState.channel)
         
-        if (await player.is_queue_empty()):
-            await player.add_to_queue(args)
-            player.play()
-        else:
-            await player.add_to_queue(args)
+        await player.play(args)
+        return
 
     
     @commands.command(name='pause')

@@ -1,17 +1,14 @@
 from enum import Enum
 from requests import get
-import discord
-from discord import Message
-from discord.ext import commands
-import json
-import asyncio
-import youtube_dl
-
+from discord import VoiceProtocol, PCMVolumeTransformer, FFmpegPCMAudio
+from music_bot.song import Song
 from music_bot.event_emitter import EventEmitter
+import asyncio
+from asyncio import AbstractEventLoop
+import youtube_dl
 
 # Suppress noise about console usage from errors
 youtube_dl.utils.bug_reports_message = lambda: ''
-ydl = youtube_dl.YoutubeDL()
 
 ytdl_format_options = {
     'format': 'bestaudio/best',
@@ -28,31 +25,30 @@ ytdl_format_options = {
 }
 
 ffmpeg_options = {
-    'options': '-vn',
+    'options': '-vn'
 }
+
+FFMEPG_PATH = 'C:/Program Files/ffmpeg/bin/ffmpeg.exe'
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 
-class YTDLSource(discord.PCMVolumeTransformer):
+class YTDLSource(PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
         super().__init__(source, volume)
 
         self.data = data
-
         self.title = data.get('title')
         self.url = data.get('url')
 
     @classmethod
-    async def from_url(cls: discord.PCMVolumeTransformer, url: str, *, loop=None, stream=False) -> discord.PCMVolumeTransformer:
+    async def from_url(cls: PCMVolumeTransformer, url: str, *, loop=None) -> PCMVolumeTransformer:
         loop = loop or asyncio.get_event_loop()
-        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
-
-        if 'entries' in data:
-            # take first item from a playlist
-            data = data['entries'][0]
-
-        filename = data['url'] if stream else ytdl.prepare_filename(data)
-        return cls(discord.FFmpegPCMAudio(executable="C:/Program Files/ffmpeg/ffmpeg-2022-08-22-git-f23e3ce858-full_build/bin/ffmpeg.exe", source=filename, **ffmpeg_options), data=data, volume=0.20)
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
+        return cls(FFmpegPCMAudio(data['url'], executable=FFMEPG_PATH, **ffmpeg_options), data=data)
+    
+    @classmethod
+    async def from_song(cls: PCMVolumeTransformer, song: Song, *, loop=None) -> PCMVolumeTransformer:
+        return await YTDLSource.from_url(song.url, loop=loop)
 
 class AudioPlayerState(Enum):
     STOPPED = 0
@@ -65,30 +61,28 @@ class AudioPlayerState(Enum):
         return self.name
 
 class AudioPlayer(EventEmitter):
-    def __init__(self, bot, voice_client):
+    def __init__(self, loop: AbstractEventLoop, voice_client: VoiceProtocol):
         super(AudioPlayer, self).__init__()
-        self.bot = bot
-        self.loop = bot.loop
+        self.loop = loop
         self.voice_client = voice_client
         self._current_player = None
         self._source = None
         self._play_lock = asyncio.Lock()
+        self._queue_lock = asyncio.Lock()
         self.queue = []
 
-    async def get_yt_url(self, arg):
+    async def get_yt_song(self, arg) -> Song:
         try:
+            # TODO - Handle Playlists
+            # TODO - Better validation than simple 'get' for youtube links, extracted from here
             get(arg)
+            return Song(ytdl.extract_info(arg, download=False))
         except:
-            return ydl.extract_info(f"ytsearch:{arg}", download=False)['entries'][0]['webpage_url']
-        else:
-            return arg
+            return Song(ytdl.extract_info(f"ytsearch:{arg}", download=False)['entries'][0])
 
     async def add_to_queue(self, args):
-        url = await self.get_yt_url(args)
-        await self._add_url_to_queue(url)
-
-    async def _add_url_to_queue(self, url):
-        self.queue.append(url)
+        song = await self.get_yt_song(args)
+        self.queue.append(song)
     
     async def clear_queue(self):
         self.queue.clear()
@@ -108,6 +102,8 @@ class AudioPlayer(EventEmitter):
             except OSError:
                 pass
             self._current_player = None
+            self._source.cleanup()
+            self._source = None
             return True
         return False
 
@@ -131,36 +127,42 @@ class AudioPlayer(EventEmitter):
     
     def is_playing(self):
         return self.voice_client.is_playing()
+    
+    async def _add_priority_song(self, args):
+        song = await self.get_yt_song(args)
+        self.queue.insert(0, song)
 
-    def play(self):
-        self.loop.create_task(self._play())
-
-    async def _play(self):
-        if self.is_paused() and self._current_player:
-            return self.resume()
-
+    async def playNext(self):
         async with self._play_lock:
             try:
-                next = self.queue.pop()
+                nextSong = self.queue.pop()
             except:
                 self.stop()
+                print('Exception thrown when getting next Song in queue')
                 return
             
             self._kill_current_player()
 
-            self._source = await YTDLSource.from_url(next, loop=self.bot.loop, stream=True)
+            self._source = await YTDLSource.from_song(nextSong, loop=self.loop)
             self.voice_client.play(self._source, after=self._on_player_complete)
             self._current_player = self.voice_client
 
-            self.emit('play')
+        
+        self.emit('play')
 
+    async def play(self, args):
+        if self.is_paused() and self._current_player:
+            return self.resume()
+
+        # if (self.is_playing()):
+        #     print('Killed Current Player to play new song')
+        #     self._kill_current_player()
+
+        await self._add_priority_song(args)
+        await self.playNext()
+        
     async def is_queue_empty(self):
         return len(self.queue) == 0
-
-    async def playNext(self):
-        nextUrl = self.queue.pop()
-        if (nextUrl):
-           await self.play(nextUrl)
 
     def _on_player_complete(self, error=None):
         if (error):
