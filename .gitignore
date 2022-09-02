@@ -1,2 +1,5 @@
 node_modules
 config.json
+*.log
+*__pycache__*
+*__pycache__/*
