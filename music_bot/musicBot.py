@@ -7,6 +7,10 @@ import json
 import asyncio
 import youtube_dl
 
+from json_logging import getLogger
+
+logger = getLogger(__name__)
+
 class MusicBot(commands.Bot):
     def __init__(self, command_prefix, intents):
         commands.Bot.__init__(self, command_prefix=command_prefix, intents=intents)
@@ -52,6 +56,9 @@ class BotCommands(commands.Cog):
 
     @commands.command(name='add')
     async def add(self, ctx: commands.Context, *, args):
+        if (not ctx.voice_client):
+            return
+
         voiceState = ctx.author.voice
         if (voiceState is None):
             await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
@@ -61,7 +68,57 @@ class BotCommands(commands.Cog):
         
         await player.add_to_queue(args)
         return
+
+    @commands.command(name='shuffle')
+    async def shuffle(self, ctx: commands.Context):
+        if (not ctx.voice_client):
+            return
+
+        voiceState = ctx.author.voice
+        if (voiceState is None):
+            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
+            return
+        
+        player = await self.bot.get_audio_player(voiceState.channel)
+        
+        await player.shuffle()
+        return
+
+    @commands.command(name='remove')
+    async def remove(self, ctx: commands.Context, *, args):
+        if (not ctx.voice_client):
+            return
+
+        voiceState = ctx.author.voice
+        if (voiceState is None):
+            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
+            return
+
+        try:
+            pos = int(args)
+        except Exception as e:
+            logger.error(f'Position Argument was not integer: {e.__name__}')
+            await ctx.send(f'If you would like to remove something from the list, try passing me a number to represent the position of the song you would like to remove. Try the \'queue\' command to see the current queue')
+            return 
+        
+        player = await self.bot.get_audio_player(voiceState.channel)
+        await player.remove_from_queue(pos)
+        return
     
+    @commands.command(name='clear')
+    async def clear(self, ctx: commands.Context):
+        if (not ctx.voice_client):
+            return
+
+        voiceState = ctx.author.voice
+        if (voiceState is None):
+            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
+            return
+        
+        player = await self.bot.get_audio_player(voiceState.channel)
+        await player.clear_queue()
+        return
+        
     @commands.command(name='play')
     async def play(self, ctx: commands.Context, *, args):
         print('Play command started')
@@ -75,6 +132,9 @@ class BotCommands(commands.Cog):
         await player.play(args)
         return
 
+    @commands.command(name='stop')
+    async def stop(self, ctx: commands.Context):
+        print('Stop command started')
     
     @commands.command(name='pause')
     async def pause(self, ctx: commands.Context):
@@ -88,6 +148,7 @@ class BotCommands(commands.Cog):
 
         player = await self.bot.get_audio_player(voiceState.channel)
         player.pause()
+        return
 
     @commands.command(name='resume')
     async def resume(self, ctx: commands.Context):
@@ -101,6 +162,27 @@ class BotCommands(commands.Cog):
 
         player = await self.bot.get_audio_player(voiceState.channel)
         player.resume()
+        return
+    
+    @commands.command(name='next')
+    async def next(self, ctx: commands.Context):
+        await self.skip_song(ctx)
+        return 
+    
+    @commands.command(name='skip')
+    async def skip_song(self, ctx: commands.Context):
+        if (not ctx.voice_client):
+            return
+        
+        voiceState = ctx.author.voice
+        if (voiceState is None):
+            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
+            return
+        
+        player = await self.bot.get_audio_player(voiceState.channel)
+        await player.playNext()
+        return
+        
 
     @commands.command(name='join')
     async def join(self, ctx: commands.Context, *, member: discord.Member = None):
@@ -128,3 +210,19 @@ class BotCommands(commands.Cog):
         player.kill()
         await ctx.voice_client.disconnect()
         del self.bot.AudioPlayers[ctx.guild.id]
+        return
+
+    @commands.command('queue')
+    async def queue(self, ctx: commands.Context):
+        if (not ctx.voice_client):
+            return
+        
+        voiceState = ctx.author.voice
+        if (voiceState is None):
+            return
+
+
+        player = await self.bot.get_audio_player(voiceState.channel)
+        queue_message = await player.view_queue()
+        await ctx.send(queue_message)
+        return 

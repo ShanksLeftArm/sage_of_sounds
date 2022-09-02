@@ -26,7 +26,7 @@ def mapLoggingLevel(level_name: str) -> int:
 def getLogger(name: str):
     LOG_LEVEL = mapLoggingLevel(config['LOG_LEVEL']) if 'LOG_LEVEL' in config else DEFAULT_LOG_LEVEL   
 
-    file_handler=logging.FileHandler('foo.log')
+    file_handler=logging.FileHandler(config['log_file'] if 'log_file' in config else '_log.log')
     stream_handler=logging.StreamHandler()
 
     stream_formatter=logging.Formatter(json_format)
