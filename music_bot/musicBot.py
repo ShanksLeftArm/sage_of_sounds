@@ -219,6 +219,45 @@ class BotCommands(commands.Cog):
         player = await self.bot.get_audio_player(voiceState.channel)
         await player.playNext()
         return
+    
+    @commands.command(name='now_playing')
+    async def now(self, ctx: commands.Context):
+        logger.debug('now_playing command started')
+        await self._now_playing(ctx)
+        logger.debug('now_playing command ended')
+        return
+
+    @commands.command(name='whats_playing')
+    async def now(self, ctx: commands.Context):
+        logger.debug('whats_playing command started')
+        await self._now_playing(ctx)
+        logger.debug('whats_playing command ended')
+        return
+    
+    @commands.command(name='now')
+    async def now(self, ctx: commands.Context):
+        logger.debug('Now command started')
+        await self._now_playing(ctx)
+        logger.debug('Now command ended')
+        return
+
+    async def _now_playing(self, ctx: commands.Context):
+        if (not ctx.voice_client):
+            return
+        
+        voiceState = ctx.author.voice
+        if (voiceState is None):
+            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
+            return
+        
+        player = await self.bot.get_audio_player(voiceState.channel)
+        now_playing_message = await player.get_now_playing()
+        if (now_playing_message):
+            await ctx.send(f'{now_playing_message}')
+        else:
+            await ctx.send('I am not currently playing - ask me to play something')
+        return
+
         
 
     @commands.command(name='join')
