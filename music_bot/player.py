@@ -104,7 +104,7 @@ class AudioPlayer(EventEmitter):
     async def add_to_queue(self, args):
         song = await self.get_yt_song(args)
         async with self._queue_lock:
-            self.queue.insert(0, song)
+            self.queue.append(song)
             logger.debug(f'Added song \"{song.title}\" to the back of the queue')
     
     async def clear_queue(self):
@@ -133,8 +133,9 @@ class AudioPlayer(EventEmitter):
     async def _add_priority_song(self, args):
         song = await self.get_yt_song(args)
         async with self._queue_lock:
+            self.queue.insert(0, song)
             logger.debug(f'Added song \"{song.title}\" to the front of the queue')
-            self.queue.append(song)
+            
 
     async def _getNextSong(self):
         async with self._queue_lock:   
@@ -142,7 +143,7 @@ class AudioPlayer(EventEmitter):
                 logger.debug('No new song in the queue, returning None')
                 return None
 
-            return self.queue.pop()
+            return self.queue.pop(0)
 
     def stop(self):
         logger.debug('Stopping Current player')
