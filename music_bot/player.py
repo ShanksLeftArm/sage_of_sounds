@@ -1,14 +1,16 @@
 from enum import Enum
 from random import shuffle
 from requests import get
-from discord import VoiceProtocol, PCMVolumeTransformer, FFmpegPCMAudio
+from discord import VoiceProtocol, PCMVolumeTransformer, FFmpegPCMAudio, Embed
 from music_bot.song import Song
 from music_bot.event_emitter import EventEmitter
+from music_bot.text_utils import formatSecondsToTime
 import asyncio
 from asyncio import AbstractEventLoop
 import youtube_dl
 from configuration import config
 from json_logging import getLogger
+
 
 logger = getLogger(__name__)
 
@@ -37,15 +39,22 @@ FFMEPG_PATH = config['ffmpeg_executable_path']
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 
-DEFAULT_QUEUE_DISPLAY_LIMIT = 10
+DEFAULT_QUEUE_DISPLAY_LIMIT = 5
 
 class YTDLSource(PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
+        self._source = source
         super().__init__(source, volume)
-
+        
+        self.count_20ms = 0
         self.data = data
         self.title = data.get('title')
         self.url = data.get('url')
+        self.webpage_url = data.get('webpage_url')
+        self._duration = data.get('duration')
+        self.uploader = data.get('uploader')
+        self.description = data.get('description')
+        self.thumbnail_link = data.get('thumbnail')
 
     @classmethod
     async def from_url(cls: PCMVolumeTransformer, url: str, *, loop=None) -> PCMVolumeTransformer:
@@ -56,6 +65,20 @@ class YTDLSource(PCMVolumeTransformer):
     @classmethod
     async def from_song(cls: PCMVolumeTransformer, song: Song, *, loop=None) -> PCMVolumeTransformer:
         return await YTDLSource.from_url(song.url, loop=loop)
+
+    def read(self) -> bytes:
+        data = self._source.read()
+        if data:
+            self.count_20ms += 1
+        return data
+
+    @property
+    def progress(self) -> str:
+        return formatSecondsToTime(int(self.count_20ms * 0.02))
+    
+    @property
+    def duration(self) -> str:
+        return formatSecondsToTime(int(self._duration))
 
 class AudioPlayerState(Enum):
     STOPPED = 0
@@ -114,9 +137,12 @@ class AudioPlayer(EventEmitter):
     async def view_queue(self):
         async with self._queue_lock:
             if (await self._is_queue_empty()):
-                return 'The Queue is Empty'
+                _now = await self._get_now_playing()
+                now_playing = f'{_now}\n\n**EMPTY QUEUE**' if _now else 'Currently on break with no requests... Let me know if you want to play or queue up something'
 
-            queue_title = '**The Queue**'
+                return now_playing
+
+            queue_title = '**THE QUEUE**'
             queue_breakln = '-' * 14
             queue = ''
             queue_display_limit = min(len(self.queue), DEFAULT_QUEUE_DISPLAY_LIMIT)
@@ -124,12 +150,28 @@ class AudioPlayer(EventEmitter):
             songs_in_queue = ''
             for pos, song in enumerate(self.queue[:queue_display_limit]):
                 whitespace_buffer = ' ' * ((highest_number_spacing - len(str(pos + 1))) + 1)
-                songs_in_queue += f'#{pos + 1}{whitespace_buffer}| ***{song.title}***\n'
+                songs_in_queue += f'#{pos + 1}{whitespace_buffer}| ***{song.title}*** | {song.duration}\n'
             trailing = '...' if len(self.queue) > DEFAULT_QUEUE_DISPLAY_LIMIT else ''
             queue = f'>>> {songs_in_queue}{trailing}'
-            return f'{queue_title}\n{queue_breakln}\n{queue}'
+            
+            # Add Currently Playing if there is a current song
+            _now = await self.get_now_playing()
+            now_playing = f'{_now}\n\n' if _now else ''
+            return f'{now_playing}{queue_title}\n{queue_breakln}\n{queue}'
 
+    async def get_now_playing(self):
+        async with self._play_lock:
+            _now = await self._get_now_playing()
+            return f'{_now}' if _now else 'There is no current song; I\'m on break at the moment. Let me know if you want to hear a tune'
     
+    async def _get_now_playing(self):
+        if (self._is_playing() or self._is_paused()) and self._source:
+            paused_vs_play = 'NOW PAUSED' if self._is_paused() else 'NOW PLAYING'
+            now_playing_breakln = '-' * 14
+            return f'**{paused_vs_play}**\n{now_playing_breakln}\n***{self._source.title}***\n<{self._source.webpage_url}>\n{self._source.progress} / {self._source.duration}'
+        else:
+            return None
+
     async def _add_priority_song(self, args):
         song = await self.get_yt_song(args)
         async with self._queue_lock:
