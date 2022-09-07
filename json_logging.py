@@ -1,7 +1,7 @@
 import logging
 from configuration import config
 
-json_format = "{'time':'%(asctime)s', 'name': '%(name)s', 'level': '%(levelname)s', 'message': '%(message)s'}"
+json_format = "{'time':'%(asctime)s', 'name': '%(name)s', 'function': '%(funcName)s', 'level': '%(levelname)s', 'message': '%(message)s'}"
 
 standard_python_format = '%(asctime)-15s %(levelname)-8s %(message)s'
 
