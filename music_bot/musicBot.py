@@ -44,10 +44,11 @@ class MusicBot(commands.Bot):
 
         return player
 
-    async def on_player_complete(self, player, **__):
+    async def on_player_complete(self, player: AudioPlayer, **__):
         # TODO empty VC logic
-        
+        logger.debug('Player Completed, playing next song')
         await player.playNext()
+        logger.debug('Next Song Played. Ending on_player_complete')
         return
 
 class BotCommands(commands.Cog):
@@ -121,7 +122,7 @@ class BotCommands(commands.Cog):
         
     @commands.command(name='play')
     async def play(self, ctx: commands.Context, *, args):
-        print('Play command started')
+        logger.debug('Play command started')
         voiceState = ctx.author.voice
         if (voiceState is None):
             await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
@@ -130,15 +131,36 @@ class BotCommands(commands.Cog):
         player = await self.bot.get_audio_player(voiceState.channel)
         
         await player.play(args)
+        logger.debug('Play command complete')
         return
 
     @commands.command(name='stop')
     async def stop(self, ctx: commands.Context):
-        print('Stop command started')
+        logger.debug('Stop command started')
+        
+        if (not ctx.voice_client):
+            return
+
+        voiceState = ctx.author.voice
+        if (voiceState is None):
+            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
+            return
+        
+        player = await self.bot.get_audio_player(voiceState.channel)
+        await player.stop()
+        logger.debug('Stop command complete')
+        return
     
     @commands.command(name='pause')
     async def pause(self, ctx: commands.Context):
+        logger.debug('Pause command started')
+        await self._pause(ctx)
+        logger.debug('Pause command ended')
+        return
+    
+    async def _pause(self, ctx: commands.Context):
         if (not ctx.voice_client):
+            logger.debug('Play command complete')
             return
 
         voiceState = ctx.author.voice
@@ -147,11 +169,18 @@ class BotCommands(commands.Cog):
             return
 
         player = await self.bot.get_audio_player(voiceState.channel)
-        player.pause()
-        return
+        await player.pause()
+
 
     @commands.command(name='resume')
     async def resume(self, ctx: commands.Context):
+        logger.debug('Resume command started')
+        await self._resume(ctx)
+        logger.debug('Resume command ended')
+        return
+        
+
+    async def _resume(self, ctx: commands.Context):
         if (not ctx.voice_client):
             return
 
@@ -161,16 +190,24 @@ class BotCommands(commands.Cog):
             return
 
         player = await self.bot.get_audio_player(voiceState.channel)
-        player.resume()
+        await player.resume()
         return
     
     @commands.command(name='next')
     async def next(self, ctx: commands.Context):
-        await self.skip_song(ctx)
+        logger.debug('Next command started')
+        await self._skip_song(ctx)
+        logger.debug('Next command ended')
         return 
     
     @commands.command(name='skip')
     async def skip_song(self, ctx: commands.Context):
+        logger.debug('Skip Song command started')
+        await self._skip_song(ctx)
+        logger.debug('Skip Song command ended')
+        return
+
+    async def _skip_song(self, ctx: commands.Context):
         if (not ctx.voice_client):
             return
         
@@ -207,7 +244,7 @@ class BotCommands(commands.Cog):
             return
         
         player = await self.bot.get_audio_player(voiceState.channel)
-        player.kill()
+        await player.kill()
         await ctx.voice_client.disconnect()
         del self.bot.AudioPlayers[ctx.guild.id]
         return

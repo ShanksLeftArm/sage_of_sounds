@@ -1,6 +1,5 @@
 from enum import Enum
 from random import shuffle
-from string import whitespace
 from requests import get
 from discord import VoiceProtocol, PCMVolumeTransformer, FFmpegPCMAudio
 from music_bot.song import Song
@@ -93,11 +92,11 @@ class AudioPlayer(EventEmitter):
             shuffle(self.queue)
 
     async def remove_from_queue(self, pos):
-        if (await self.is_queue_empty()):
-            return
-        
         async with self._queue_lock:
-            if pos < len(self.queue):
+            if (await self._is_queue_empty()):
+                return
+
+            if pos <= len(self.queue):
                 del self.queue[pos-1]
             else:
                 return
@@ -106,27 +105,28 @@ class AudioPlayer(EventEmitter):
         song = await self.get_yt_song(args)
         async with self._queue_lock:
             self.queue.append(song)
+            logger.debug(f'Added song \"{song.title}\" to the back of the queue')
     
     async def clear_queue(self):
         async with self._queue_lock:
             self.queue.clear()
     
     async def view_queue(self):
-        if (await self.is_queue_empty()):
-            return 'The Queue is Empty'
-        
         async with self._queue_lock:
+            if (await self._is_queue_empty()):
+                return 'The Queue is Empty'
+
             queue_title = '**The Queue**'
             queue_breakln = '-' * 14
-            if len(self.queue) > 1:
-                queue_display_limit = min(len(self.queue), DEFAULT_QUEUE_DISPLAY_LIMIT)
-                highest_number_spacing = len(str(queue_display_limit))
-                songs_in_queue = ''
-                for pos, song in enumerate(self.queue[:queue_display_limit]):
-                    whitespace_buffer = ' ' * ((highest_number_spacing - len(str(pos + 1))) + 1)
-                    songs_in_queue += f'#{pos + 1}{whitespace_buffer}| ***{song.title}***\n'
-                trailing = '...' if len(self.queue) > DEFAULT_QUEUE_DISPLAY_LIMIT else ''
-                queue = f'>>> {songs_in_queue}{trailing}'
+            queue = ''
+            queue_display_limit = min(len(self.queue), DEFAULT_QUEUE_DISPLAY_LIMIT)
+            highest_number_spacing = len(str(queue_display_limit))
+            songs_in_queue = ''
+            for pos, song in enumerate(self.queue[:queue_display_limit]):
+                whitespace_buffer = ' ' * ((highest_number_spacing - len(str(pos + 1))) + 1)
+                songs_in_queue += f'#{pos + 1}{whitespace_buffer}| ***{song.title}***\n'
+            trailing = '...' if len(self.queue) > DEFAULT_QUEUE_DISPLAY_LIMIT else ''
+            queue = f'>>> {songs_in_queue}{trailing}'
             return f'{queue_title}\n{queue_breakln}\n{queue}'
 
     
@@ -135,98 +135,138 @@ class AudioPlayer(EventEmitter):
         async with self._queue_lock:
             self.queue.insert(0, song)
             logger.debug(f'Added song \"{song.title}\" to the front of the queue')
+            
 
     async def _getNextSong(self):
-        if (await self.is_queue_empty()):
+        if (await self._is_queue_empty()):
             logger.debug('No new song in the queue, returning None')
             return None
-        
-        async with self._queue_lock:   
-            return self.queue.pop()
 
-    def stop(self):
+        return self.queue.pop(0)
+    
+    async def stop(self):
+        async with self._play_lock:
+            logger.debug('Play Lock Acquired')
+            self._stop()
+        logger.debug('Play Lock Released')
+
+    def _stop(self):
         logger.debug('Stopping Current player')
         self._kill_current_player()
         self.emit('stop')
 
-    def kill(self):
-        self.queue.clear()
-        self._kill_current_player()
+    async def kill(self):
+        async with self._queue_lock:
+            self.queue.clear()
+        async with self._play_lock:
+            logger.debug('Play Lock Acquired')
+            self._kill_current_player()
+        logger.debug('Play Lock Acquired')
+        return
 
     def _kill_current_player(self):
         if self._current_player:
             try:
-                self._current_player.stop()
+                player_to_stop = self._current_player
+                self._current_player = None
+                player_to_stop.stop()
+                self._source.cleanup()
+                self._source = None
             except OSError:
                 logger.error('OSEror encountered in attempt to stop current player')
                 pass
-            self._current_player = None
-            self._source.cleanup()
-            self._source = None
             return True
         return False
 
-    def pause(self):
-        if self.is_playing():
+    async def pause(self):
+        async with self._play_lock:
+            logger.debug('Play Lock Acquired')
+            await self._pause()
+        
+        logger.debug('Play Lock Released')
+        return
+    
+    async def _pause(self):
+        if self._is_playing():
             self.voice_client.pause()
 
-    def resume(self):
-        if self.is_paused() and self._current_player:
-            self._current_player.resume()
-            self.emit('resume')
-            return
-        
-        if self.is_paused() and not self._current_player:
+    async def resume(self):
+        async with self._play_lock:
+            logger.debug('Play Lock Acquired')
+            await self._resume()
+        logger.debug('Play Lock Released')
+        return
+            
+    async def _resume(self):
+        if self._is_paused() and self._current_player:
+                self._current_player.resume()
+                self.emit('resume')
+                return
+            
+        if self._is_paused() and not self._current_player:
             self._kill_current_player()
             return
     
-    def is_paused(self):
+    def _is_paused(self):
         return self.voice_client.is_paused()
     
-    def is_playing(self):
+    def _is_playing(self):
         return self._current_player and self.voice_client.is_playing()
 
     async def playNext(self):
+        async with self._play_lock:
+            logger.debug('Play Lock Acquired')
+            await self._playNext()
+        logger.debug('Play Lock Released')
+        return
+
+    async def _playNext(self):
         logger.debug('In the play Next Function')
-        nextSong = await self._getNextSong()
-        logger.debug('Got the next Song (if there is one)')
+        if (self._current_player and self._current_player.is_playing()):
+            logger.debug('Stopping current player to play next song')
+            self._stop()
+            return
+
+        async with self._queue_lock:
+            nextSong = await self._getNextSong()
 
         if (not nextSong): 
             logger.debug('No new song to play')
-            self.stop()
+            self._stop()
             return            
 
         logger.debug(f'Next Song to play is {nextSong.title}')
-        async with self._play_lock:
-            if (self._current_player):
-                logger.debug('Stopping current player to play next song')
-                self.stop()
-            self._source = await YTDLSource.from_song(nextSong, loop=self.loop)
-            self.voice_client.play(self._source, after=self._on_player_complete)
-            self._current_player = self.voice_client
-            logger.info(f'Playing new song: {self._source.title}')
+        self._source = await YTDLSource.from_song(nextSong, loop=self.loop)
+        self.voice_client.play(self._source, after=self._on_player_complete)
+        self._current_player = self.voice_client
+        logger.info(f'Playing new song: {self._source.title}')
 
         self.emit('play')
+        return
 
     async def play(self, args):
-        logger.debug('Inside play function')
-        if self.is_paused() and self._current_player:
-            return self.resume()
-
-        if (self.is_playing()):
-            async with self._play_lock:
+        async with self._play_lock:
+            logger.debug('Play Lock Acquired')
+            if self._is_paused() and self._current_player:
+                return self._resume()
+            
+            if (self._is_playing()):
                 logger.debug('Request to play new song while player is playing. Stopping existing player')
-                self.stop()
+                self._stop()
 
-        await self._add_priority_song(args)
-        await self.playNext()
+            await self._add_priority_song(args)
+            await self._playNext()
+        logger.debug('Play Lock Released')
+        return
         
-    async def is_queue_empty(self):
-        async with self._queue_lock:
-            return len(self.queue) == 0
+    async def _is_queue_empty(self):
+        return len(self.queue) == 0
 
     def _on_player_complete(self, error=None):
         if (error):
+            logger.error('There was an error on player completion', error)
             return
 
+        logger.debug('No Error on player complete, emiting song-complete')
         self.emit('song-complete', player=self)
+        return
