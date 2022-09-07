@@ -1,6 +1,5 @@
 from enum import Enum
 from random import shuffle
-from string import whitespace
 from requests import get
 from discord import VoiceProtocol, PCMVolumeTransformer, FFmpegPCMAudio
 from music_bot.song import Song
@@ -93,11 +92,11 @@ class AudioPlayer(EventEmitter):
             shuffle(self.queue)
 
     async def remove_from_queue(self, pos):
-        if (await self.is_queue_empty()):
-            return
-        
         async with self._queue_lock:
-            if pos < len(self.queue):
+            if (await self.is_queue_empty()):
+                return
+
+            if pos <= len(self.queue):
                 del self.queue[pos-1]
             else:
                 return
@@ -105,43 +104,44 @@ class AudioPlayer(EventEmitter):
     async def add_to_queue(self, args):
         song = await self.get_yt_song(args)
         async with self._queue_lock:
-            self.queue.append(song)
+            self.queue.insert(0, song)
+            logger.debug(f'Added song \"{song.title}\" to the back of the queue')
     
     async def clear_queue(self):
         async with self._queue_lock:
             self.queue.clear()
     
     async def view_queue(self):
-        if (await self.is_queue_empty()):
-            return 'The Queue is Empty'
-        
         async with self._queue_lock:
+            if (await self.is_queue_empty()):
+                return 'The Queue is Empty'
+
             queue_title = '**The Queue**'
             queue_breakln = '-' * 14
-            if len(self.queue) > 1:
-                queue_display_limit = min(len(self.queue), DEFAULT_QUEUE_DISPLAY_LIMIT)
-                highest_number_spacing = len(str(queue_display_limit))
-                songs_in_queue = ''
-                for pos, song in enumerate(self.queue[:queue_display_limit]):
-                    whitespace_buffer = ' ' * ((highest_number_spacing - len(str(pos + 1))) + 1)
-                    songs_in_queue += f'#{pos + 1}{whitespace_buffer}| ***{song.title}***\n'
-                trailing = '...' if len(self.queue) > DEFAULT_QUEUE_DISPLAY_LIMIT else ''
-                queue = f'>>> {songs_in_queue}{trailing}'
+            queue = ''
+            queue_display_limit = min(len(self.queue), DEFAULT_QUEUE_DISPLAY_LIMIT)
+            highest_number_spacing = len(str(queue_display_limit))
+            songs_in_queue = ''
+            for pos, song in enumerate(self.queue[:queue_display_limit]):
+                whitespace_buffer = ' ' * ((highest_number_spacing - len(str(pos + 1))) + 1)
+                songs_in_queue += f'#{pos + 1}{whitespace_buffer}| ***{song.title}***\n'
+            trailing = '...' if len(self.queue) > DEFAULT_QUEUE_DISPLAY_LIMIT else ''
+            queue = f'>>> {songs_in_queue}{trailing}'
             return f'{queue_title}\n{queue_breakln}\n{queue}'
 
     
     async def _add_priority_song(self, args):
         song = await self.get_yt_song(args)
         async with self._queue_lock:
-            self.queue.insert(0, song)
             logger.debug(f'Added song \"{song.title}\" to the front of the queue')
+            self.queue.append(song)
 
     async def _getNextSong(self):
-        if (await self.is_queue_empty()):
-            logger.debug('No new song in the queue, returning None')
-            return None
-        
         async with self._queue_lock:   
+            if (await self.is_queue_empty()):
+                logger.debug('No new song in the queue, returning None')
+                return None
+
             return self.queue.pop()
 
     def stop(self):
@@ -222,8 +222,7 @@ class AudioPlayer(EventEmitter):
         await self.playNext()
         
     async def is_queue_empty(self):
-        async with self._queue_lock:
-            return len(self.queue) == 0
+        return len(self.queue) == 0
 
     def _on_player_complete(self, error=None):
         if (error):
