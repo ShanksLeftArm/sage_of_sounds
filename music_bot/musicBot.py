@@ -258,8 +258,6 @@ class BotCommands(commands.Cog):
             await ctx.send('I am not currently playing - ask me to play something')
         return
 
-        
-
     @commands.command(name='join')
     async def join(self, ctx: commands.Context, *, member: discord.Member = None):
         if (ctx.voice_client):
@@ -302,3 +300,35 @@ class BotCommands(commands.Cog):
         queue_message = await player.view_queue()
         await ctx.send(queue_message)
         return 
+
+    @commands.command('volume')
+    async def volume(self, ctx: commands.Context, *, args: str):
+        if (not ctx.voice_client):
+            return
+        
+        voiceState = ctx.author.voice
+        if (voiceState is None):
+            return
+        
+        command_option = args.split(" ")[0]
+
+        player = await self.bot.get_audio_player(voiceState.channel)
+
+        if (command_option.isnumeric()):
+            new_volume = int(command_option)
+            if new_volume <= 0 or new_volume > 100:
+                return ctx.send(f'{command_option} is an invalid volume. Numbers between 0-100 are accepted')
+            await player.set_volume(new_volume)
+        elif (command_option.lower() == 'display'):
+            volume = await player.get_volume()
+            if (volume):
+                await ctx.send(f'Playing at {volume}% volume')
+        elif (command_option.lower() in ['up', 'down']):
+            await player.volume_adjustment(command_option.lower())
+        else:
+            await ctx.send(f'I do not recognize your volume request \'{command_option}\'. Try a number between 1 and 100, \'up\' or \'down\', or \'display\' to see the current volume')
+        
+        return
+
+
+

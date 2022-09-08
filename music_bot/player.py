@@ -36,13 +36,14 @@ ffmpeg_options = {
 }
 
 FFMEPG_PATH = config['ffmpeg_executable_path']
+DEFAULT_VOLUME = config['DEFAULT_VOLUME']
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 
 DEFAULT_QUEUE_DISPLAY_LIMIT = 5
 
 class YTDLSource(PCMVolumeTransformer):
-    def __init__(self, source, *, data, volume=0.5):
+    def __init__(self, source: FFmpegPCMAudio, *, data, volume):
         self._source = source
         super().__init__(source, volume)
         
@@ -57,17 +58,17 @@ class YTDLSource(PCMVolumeTransformer):
         self.thumbnail_link = data.get('thumbnail')
 
     @classmethod
-    async def from_url(cls: PCMVolumeTransformer, url: str, *, loop=None) -> PCMVolumeTransformer:
+    async def from_url(cls: PCMVolumeTransformer, url: str, *, loop=None, volume=DEFAULT_VOLUME) -> PCMVolumeTransformer:
         loop = loop or asyncio.get_event_loop()
         data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
-        return cls(FFmpegPCMAudio(data['url'], executable=FFMEPG_PATH, **ffmpeg_options), data=data)
+        return cls(FFmpegPCMAudio(data['url'], executable=FFMEPG_PATH, **ffmpeg_options), data=data, volume=volume)
     
     @classmethod
-    async def from_song(cls: PCMVolumeTransformer, song: Song, *, loop=None) -> PCMVolumeTransformer:
-        return await YTDLSource.from_url(song.url, loop=loop)
+    async def from_song(cls: PCMVolumeTransformer, song: Song, *, loop=None, volume=DEFAULT_VOLUME) -> PCMVolumeTransformer:
+        return await YTDLSource.from_url(song.url, loop=loop, volume=volume)
 
     def read(self) -> bytes:
-        data = self._source.read()
+        data = super().read()
         if data:
             self.count_20ms += 1
         return data
@@ -94,6 +95,7 @@ class AudioPlayer(EventEmitter):
     def __init__(self, loop: AbstractEventLoop, voice_client: VoiceProtocol):
         super(AudioPlayer, self).__init__()
         self.loop = loop
+        self.volume = DEFAULT_VOLUME
         self.voice_client = voice_client
         self._current_player = None
         self._source = None
@@ -278,7 +280,7 @@ class AudioPlayer(EventEmitter):
             return            
 
         logger.debug(f'Next Song to play is {nextSong.title}')
-        self._source = await YTDLSource.from_song(nextSong, loop=self.loop)
+        self._source = await YTDLSource.from_song(nextSong, loop=self.loop, volume=self.volume)
         self.voice_client.play(self._source, after=self._on_player_complete)
         self._current_player = self.voice_client
         logger.info(f'Playing new song: {self._source.title}')
@@ -299,6 +301,54 @@ class AudioPlayer(EventEmitter):
             await self._add_priority_song(args)
             await self._playNext()
         logger.debug('Play Lock Released')
+        return
+
+    async def volume_adjustment(self, direction):
+        async with self._play_lock:
+            logger.debug('Play Lock Acquired')
+            current_volume = self.volume
+            current_volume = current_volume * 100.0
+            current_tens = int(current_volume / 10)
+            current_ones = int(current_volume % 10)
+            current_tens = current_tens + 1 if current_ones >= 5 else current_tens
+            
+            if direction == 'down':
+                new_volume = float(((current_tens * 10) - 15) / 100.0)
+                await self._set_volume(new_volume)
+            elif direction == 'up':
+                new_volume = float(((current_tens * 10) + 15) / 100.0)
+                await self._set_volume(new_volume)
+            else:
+                logger.error(f'Unexcepected volume adjustment of {direction} encountered. Volume change not possible')
+        logger.debug('Play Lock Released')
+        return
+    
+    async def get_volume(self) -> int:
+        async with self._play_lock:
+            logger.debug('Play Lock Acquired')
+            if self._is_paused() or self._is_playing() and self._source:
+                volume = int(self.volume * 100)
+            else:
+                volume = None
+        logger.debug('Play Lock Released')
+        return volume
+    
+    async def set_volume(self, new_volume: int):
+        async with self._play_lock:
+            logger.debug('Play Lock Acquired')
+            await self._set_volume(float(new_volume / 100.0))
+        logger.debug('Play Lock Released')
+        return
+    
+    async def _set_volume(self, new_volume: float):
+        new_volume = min(new_volume, 1.0)
+        new_volume = max(new_volume, 0.05)
+        self.volume = new_volume
+
+        if self._source:
+            logger.info(f'Setting source volume to {new_volume}')
+
+            self._source.volume = new_volume
         return
         
     async def _is_queue_empty(self):
