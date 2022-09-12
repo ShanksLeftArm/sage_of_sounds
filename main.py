@@ -13,7 +13,7 @@ prefix = '!'
 intents =discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
-bot = MusicBot(command_prefix='!', intents=intents)
+bot = MusicBot(command_prefix=config['command_prefix'], intents=intents)
 try:
     bot.run(config['token'])
     logger.debug('bot is successfully running')
