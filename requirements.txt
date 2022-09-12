@@ -1,0 +1,6 @@
+asyncio
+discord.py
+requests
+youtube-dl
+urllib3
+yarl
