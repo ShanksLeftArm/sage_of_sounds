@@ -25,14 +25,19 @@ This package ALSO requires a local installation of ffmpeg in order to stream the
 Create a config file at the root level of the project containing AT LEAST the following:
 - **ffmpeg_executable_path** - Path to your local ffmpeg executable
 - **token** - The secret token for your bot
+- **command_prefix** - The command prefix to use for your bot
 
 Example:
 ```json
 {
     "token": "[YOUR TOKEN HERE]",
-    "ffmpeg_executable_path": "C:/Program Files/ffmpeg/bin/ffmpeg.exe"
+    "ffmpeg_executable_path": "C:/Program Files/ffmpeg/bin/ffmpeg.exe",
+    "command_prefix": "!"
 }
 ```
+
+Optional config variables:
+- **LOG_LEVEL** - The Log Level the logger should log at [INFO | CRITICAL | DEBUG | ERROR | WARN ]
 
 
 ## Usage
