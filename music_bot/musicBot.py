@@ -3,6 +3,7 @@ import discord
 from discord import VoiceChannel
 from discord.ext import commands
 from music_bot.player import AudioPlayer
+from music_bot.command_validation import MusicCommandValidation
 import json
 import asyncio
 import youtube_dl
@@ -45,7 +46,6 @@ class MusicBot(commands.Bot):
         return player
 
     async def on_player_complete(self, player: AudioPlayer, **__):
-        # TODO empty VC logic
         logger.debug('Player Completed, playing next song')
         await player.playNext()
         logger.debug('Next Song Played. Ending on_player_complete')
@@ -54,6 +54,8 @@ class MusicBot(commands.Bot):
 class MusicCommands(commands.Cog):
     def __init__(self, bot: MusicBot):
         self.bot = bot
+        self.I_WILL_NOT_DO_THAT = 'You are not in my audience, I will not do that'
+        self.YOU_ARE_NOT_IN_VOICE_CHAT = 'You are not anywhere I can perform my music! Try joining a voice channel'
 
     @commands.command(name='add')
     async def add(self, ctx: commands.Context, *, song_query):
@@ -67,36 +69,31 @@ class MusicCommands(commands.Cog):
                 add never gonna give you up lyrics
                 add https://www.youtube.com/watch?v=dQw4w9WgXcQ
         '''
-        if (not ctx.voice_client):
+        if (MusicCommandValidation.authorIsInAudience(ctx)):
+            player = await self.bot.get_audio_player(ctx.author.voice.channel)
+            await player.add_to_queue(song_query)
             return
-
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
+        elif (MusicCommandValidation.botIsNotPerforming(ctx)):
             return
-
-        player = await self.bot.get_audio_player(voiceState.channel)
+        else:
+            await ctx.message.reply(self.I_WILL_NOT_DO_THAT)
+            return
         
-        await player.add_to_queue(song_query)
-        return
 
     @commands.command(name='shuffle')
     async def shuffle(self, ctx: commands.Context):
         '''
         Shuffles the music queue
         '''
-        if (not ctx.voice_client):
+        if (MusicCommandValidation.authorIsInAudience(ctx)):
+            player = await self.bot.get_audio_player(ctx.author.voice.channel)
+            await player.shuffle()
             return
-
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
+        elif (MusicCommandValidation.botIsNotPerforming(ctx)):
             return
-        
-        player = await self.bot.get_audio_player(voiceState.channel)
-        
-        await player.shuffle()
-        return
+        else:
+            await ctx.message.reply(self.I_WILL_NOT_DO_THAT)
+            return
 
     @commands.command(name='remove')
     async def remove(self, ctx: commands.Context, *, position):
@@ -109,41 +106,39 @@ class MusicCommands(commands.Cog):
                 remove 1
                 remove 4
         '''
-        if (not ctx.voice_client):
-            return
+        if (MusicCommandValidation.authorIsInAudience(ctx)):
+            try:
+                pos = int(position)
+                player = await self.bot.get_audio_player(ctx.author.voice.channel)
 
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
+                player = await self.bot.get_audio_player(ctx.author.voice.channel)
+                await player.remove_from_queue(pos)
+                return
+            except Exception as e:
+                logger.error(f'Position Argument was not integer: {e.__name__}')
+                await ctx.send(f'If you would like to remove something from the list, try passing me a number to represent the position of the song you would like to remove. Try the \'queue\' command to see the current queue')
+                return 
+        elif (MusicCommandValidation.botIsNotPerforming(ctx)):
             return
-
-        try:
-            pos = int(position)
-        except Exception as e:
-            logger.error(f'Position Argument was not integer: {e.__name__}')
-            await ctx.send(f'If you would like to remove something from the list, try passing me a number to represent the position of the song you would like to remove. Try the \'queue\' command to see the current queue')
-            return 
-        
-        player = await self.bot.get_audio_player(voiceState.channel)
-        await player.remove_from_queue(pos)
-        return
+        else:
+            await ctx.message.reply(self.I_WILL_NOT_DO_THAT)
+            return
+       
     
     @commands.command(name='clear')
     async def clear(self, ctx: commands.Context):
         '''
         Clears the current music queue
         '''
-        if (not ctx.voice_client):
+        if (MusicCommandValidation.authorIsInAudience(ctx)):
+            player = await self.bot.get_audio_player(ctx.author.voice.channel)
+            await player.clear_queue()
             return
-
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
+        elif (MusicCommandValidation.botIsNotPerforming(ctx)):
             return
-        
-        player = await self.bot.get_audio_player(voiceState.channel)
-        await player.clear_queue()
-        return
+        else:
+            await ctx.message.reply(self.I_WILL_NOT_DO_THAT)
+            return
         
     @commands.command(name='play')
     async def play(self, ctx: commands.Context, *, song_query):
@@ -157,10 +152,10 @@ class MusicCommands(commands.Cog):
                 play never gonna give you up lyrics
                 play https://www.youtube.com/watch?v=dQw4w9WgXcQ
         '''
-        logger.debug('Play command started')
+        
         voiceState = ctx.author.voice
         if (voiceState is None):
-            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
+            await ctx.message.reply(self.YOU_ARE_NOT_IN_VOICE_CHAT)
             return
 
         player = await self.bot.get_audio_player(voiceState.channel)
@@ -175,17 +170,7 @@ class MusicCommands(commands.Cog):
         Pauses the current performance 
         '''
         logger.debug('Stop command started')
-        
-        if (not ctx.voice_client):
-            return
-
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
-            return
-        
-        player = await self.bot.get_audio_player(voiceState.channel)
-        await self._pause()
+        await self.__pause()        
         logger.debug('Stop command complete')
         return
     
@@ -195,22 +180,19 @@ class MusicCommands(commands.Cog):
         Pauses the current performance 
         '''
         logger.debug('Pause command started')
-        await self._pause(ctx)
+        await self.__pause(ctx)
         logger.debug('Pause command ended')
         return
     
-    async def _pause(self, ctx: commands.Context):
-        if (not ctx.voice_client):
-            logger.debug('Play command complete')
-            return
-
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
-            return
-
-        player = await self.bot.get_audio_player(voiceState.channel)
-        await player.pause()
+    async def __pause(self, ctx: commands.Context):
+        if (MusicCommandValidation.authorIsInAudience(ctx)):
+            player = await self.bot.get_audio_player(ctx.author.voice.channel)
+            await player.pause()
+        elif (MusicCommandValidation.botIsNotPerforming(ctx)):
+            pass
+        else:
+            await ctx.message.reply(self.I_WILL_NOT_DO_THAT)
+        return
 
 
     @commands.command(name='resume')
@@ -219,31 +201,29 @@ class MusicCommands(commands.Cog):
         Resumes play if a performance was paused
         '''
         logger.debug('Resume command started')
-        await self._resume(ctx)
+        await self.__resume(ctx)
         logger.debug('Resume command ended')
         return
         
 
-    async def _resume(self, ctx: commands.Context):
-        if (not ctx.voice_client):
-            return
+    async def __resume(self, ctx: commands.Context):
+        if (MusicCommandValidation.authorIsInAudience(ctx)):
+            player = await self.bot.get_audio_player(ctx.author.voice.channel)
+            await player.resume()
+        elif (MusicCommandValidation.botIsNotPerforming(ctx)):
+            pass
+        else:
+            await ctx.message.reply(self.I_WILL_NOT_DO_THAT)
 
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
-            return
-
-        player = await self.bot.get_audio_player(voiceState.channel)
-        await player.resume()
         return
-    
+
     @commands.command(name='next')
     async def next(self, ctx: commands.Context):
         '''
         Stops the current performance and begins the next in the music queue
         '''
         logger.debug('Next command started')
-        await self._skip_song(ctx)
+        await self.__skip_song(ctx)
         logger.debug('Next command ended')
         return 
     
@@ -253,21 +233,19 @@ class MusicCommands(commands.Cog):
         Stops the current performance and begins the next in the music queue
         '''
         logger.debug('Skip Song command started')
-        await self._skip_song(ctx)
+        await self.__skip_song(ctx)
         logger.debug('Skip Song command ended')
         return
 
-    async def _skip_song(self, ctx: commands.Context):
-        if (not ctx.voice_client):
+    async def __skip_song(self, ctx: commands.Context):
+        if (MusicCommandValidation.authorIsInAudience(ctx)):
+            player = await self.bot.get_audio_player(ctx.author.voice.channel)
+            await player.playNext()
             return
-        
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
-            return
-        
-        player = await self.bot.get_audio_player(voiceState.channel)
-        await player.playNext()
+        elif (MusicCommandValidation.botIsNotPerforming(ctx)):
+            pass
+        else:
+            await ctx.message.reply(self.I_WILL_NOT_DO_THAT)
         return
     
     @commands.command(name='now_playing')
@@ -276,7 +254,7 @@ class MusicCommands(commands.Cog):
         Displays what song is currently being performed
         '''
         logger.debug('now_playing command started')
-        await self._now_playing(ctx)
+        await self.__now_playing(ctx)
         logger.debug('now_playing command ended')
         return
 
@@ -286,7 +264,7 @@ class MusicCommands(commands.Cog):
         Displays what song is currently being performed
         '''
         logger.debug('whats_playing command started')
-        await self._now_playing(ctx)
+        await self.__now_playing(ctx)
         logger.debug('whats_playing command ended')
         return
     
@@ -296,25 +274,23 @@ class MusicCommands(commands.Cog):
         Displays what song is currently being performed
         '''
         logger.debug('Now command started')
-        await self._now_playing(ctx)
+        await self.__now_playing(ctx)
         logger.debug('Now command ended')
         return
 
-    async def _now_playing(self, ctx: commands.Context):
-        if (not ctx.voice_client):
+    async def __now_playing(self, ctx: commands.Context):
+        if (MusicCommandValidation.authorIsInAudience(ctx)):
+            player = await self.bot.get_audio_player(ctx.author.voice.channel)
+            now_playing_message = await player.get_now_playing()
+            if (now_playing_message):
+                await ctx.send(f'{now_playing_message}')
+            else:
+                await ctx.send('I am not currently playing - ask me to play something')
             return
-        
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
-            return
-        
-        player = await self.bot.get_audio_player(voiceState.channel)
-        now_playing_message = await player.get_now_playing()
-        if (now_playing_message):
-            await ctx.send(f'{now_playing_message}')
+        elif (MusicCommandValidation.botIsNotPerforming(ctx)):
+            pass
         else:
-            await ctx.send('I am not currently playing - ask me to play something')
+            await ctx.message.reply(self.I_WILL_NOT_DO_THAT)
         return
 
     @commands.command(name='join')
@@ -322,52 +298,46 @@ class MusicCommands(commands.Cog):
         '''
         Request for me to join your voice channel for a performance
         '''
-        if (ctx.voice_client):
-            return
-
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            await ctx.message.reply('You are not anywhere I can perform my music! Try joining a voice channel')
-            return
-        
-        await self.bot.get_audio_player(voiceState.channel)
+        if (MusicCommandValidation.botIsNotPerforming(ctx)):
+            if (ctx.author.voice):
+                await self.bot.get_audio_player(ctx.author.voice.channel)
+            else:
+                await ctx.reply(self.YOU_ARE_NOT_IN_VOICE_CHAT)
         return
     
     @commands.command(name = 'leave')
     async def leave(self, ctx: commands.Context):
         '''
         Request for me stop performing and to leave your voice channel
-        '''
-        if (not ctx.voice_client):
-            return
+        '''        
+        if (MusicCommandValidation.authorIsInAudience(ctx)):
+            player = await self.bot.get_audio_player(ctx.author.voice.channel)
+            await player.kill()
+            await ctx.voice_client.disconnect()
+            del self.bot.AudioPlayers[ctx.guild.id]
+        elif (MusicCommandValidation.botIsNotPerforming(ctx)):
+            pass
+        else:
+            await ctx.reply(self.I_WILL_NOT_DO_THAT)
         
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            return
-        
-        player = await self.bot.get_audio_player(voiceState.channel)
-        await player.kill()
-        await ctx.voice_client.disconnect()
-        del self.bot.AudioPlayers[ctx.guild.id]
         return
+        
 
     @commands.command('queue')
     async def queue(self, ctx: commands.Context):
         '''
         Displays what is currently playing and what is in the queue
         '''
-        if (not ctx.voice_client):
-            return
+        if (MusicCommandValidation.authorIsInAudience(ctx)):
+            player = await self.bot.get_audio_player(ctx.author.voice.channel)
+            queue_message = await player.view_queue()
+            await ctx.send(queue_message)
+        elif (MusicCommandValidation.botIsNotPerforming(ctx)):
+            pass
+        else:
+            pass
         
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            return
-
-
-        player = await self.bot.get_audio_player(voiceState.channel)
-        queue_message = await player.view_queue()
-        await ctx.send(queue_message)
-        return 
+        return
 
     @commands.command('volume')
     async def volume(self, ctx: commands.Context, *, volume_adjustment: str):
@@ -385,32 +355,29 @@ class MusicCommands(commands.Cog):
                 volume up
 
         '''
-        if (not ctx.voice_client):
-            return
-        
-        voiceState = ctx.author.voice
-        if (voiceState is None):
-            return
-        
-        command_option = volume_adjustment.split(" ")[0]
+        if (MusicCommandValidation.authorIsInAudience(ctx)):
+            command_option = volume_adjustment.split(" ")[0]
+            player = await self.bot.get_audio_player(ctx.author.voice.channel)
 
-        player = await self.bot.get_audio_player(voiceState.channel)
-
-        if (command_option.isnumeric()):
-            new_volume = int(command_option)
-            if new_volume <= 1 or new_volume > 100:
-                return ctx.send(f'{command_option} is an invalid volume. Numbers between 1-100 are accepted')
-            await player.set_volume(new_volume)
-        elif (command_option.lower() == 'display'):
-            volume = await player.get_volume()
-            if (volume):
-                await ctx.send(f'Playing at {volume}% volume')
-        elif (command_option.lower() in ['up', 'down']):
-            await player.volume_adjustment(command_option.lower())
+            if (command_option.isnumeric()):
+                new_volume = int(command_option)
+                if 1 <= new_volume or new_volume <= 100:
+                    await player.set_volume(new_volume)
+                else:
+                    await ctx.send(f'{command_option} is an invalid volume. Numbers between 1-100 are accepted')                
+            elif (command_option.lower() == 'display'):
+                volume = await player.get_volume()
+                if (volume):
+                    await ctx.send(f'Playing at {volume}% volume')
+                else:
+                    logger.error('Volume is null despite performance in progress in guild {} (ID {})'.format(ctx.guild.name, ctx.guild.id))
+            elif (command_option.lower() in ['up', 'down']):
+                await player.volume_adjustment(command_option.lower())
+            else:
+                await ctx.send(f'I do not recognize your volume request \'{command_option}\'. Try a number between 1 and 100, \'up\' or \'down\', or \'display\' to see the current volume')
+        elif (MusicCommandValidation.botIsNotPerforming(ctx)):
+            pass
         else:
-            await ctx.send(f'I do not recognize your volume request \'{command_option}\'. Try a number between 1 and 100, \'up\' or \'down\', or \'display\' to see the current volume')
+            await ctx.reply(self.I_WILL_NOT_DO_THAT)
         
         return
-
-
-
